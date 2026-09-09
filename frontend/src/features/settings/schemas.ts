@@ -535,7 +535,7 @@ const DaySchema = z.strictObject({ schema_version: z.literal(2), instance_id: z.
 export const TelemetrySnapshotEnvelopeSchema = z.strictObject({ instance_id: z.string(), metrics: TelemetrySnapshotSchema, timestamp: z.iso.datetime({ offset: true }) });
 export const TelemetryDaySchema = DaySchema;
 
-const TelemetryPreviewSchema = z.strictObject({ heartbeat: TelemetrySnapshotEnvelopeSchema, day: DaySchema });
+const TelemetryPreviewSchema = z.strictObject({ heartbeat: TelemetrySnapshotEnvelopeSchema.optional(), day: DaySchema.optional(), instance_id: z.string().optional(), metrics: TelemetrySnapshotSchema.optional(), timestamp: z.string().optional() });
 export const TelemetryConsentSchema = z.object({
   state: TelemetryConsentStateSchema,
   source: TelemetryConsentSourceSchema,
@@ -562,5 +562,5 @@ export type ModelContextWindowOverrides = z.infer<typeof ModelContextWindowOverr
 export type ModelContextWindowOverrideUpsertRequest = z.infer<typeof ModelContextWindowOverrideUpsertRequestSchema>;
 export type TelemetrySnapshot = z.infer<typeof TelemetrySnapshotSchema>;
 export type TelemetrySnapshotEnvelope = z.infer<typeof TelemetrySnapshotEnvelopeSchema>;
-export type TelemetryConsent = z.infer<typeof TelemetryConsentSchema>;
+export type TelemetryConsent = Omit<z.infer<typeof TelemetryConsentSchema>, "preview"> & { preview: any };
 export type TelemetryConsentUpdateRequest = z.infer<typeof TelemetryConsentUpdateRequestSchema>;
