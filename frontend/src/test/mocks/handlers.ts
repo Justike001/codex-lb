@@ -51,6 +51,7 @@ import {
   createTelemetryConsent,
   createTelemetrySnapshotEnvelope,
   createModelContextWindowOverrides,
+  createTelemetryPreview,
   createUpstreamProxyAdmin,
   createRequestLogsResponse,
   createScimToken,
@@ -1338,12 +1339,12 @@ export const handlers = [
   }),
 
   http.get("/api/settings/telemetry", ({ request }) => {
-    // include_preview=true is the on-demand path: the envelope is attached
-    // regardless of consent state.
+    // include_preview=true is the on-demand path: both preview bodies are
+    // attached regardless of consent state.
     if (new URL(request.url).searchParams.get("include_preview") === "true") {
       return HttpResponse.json({
         ...state.telemetryConsent,
-        preview: createTelemetrySnapshotEnvelope(),
+        preview: createTelemetryPreview(),
       });
     }
     return HttpResponse.json(state.telemetryConsent);

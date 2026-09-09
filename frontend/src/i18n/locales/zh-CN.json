@@ -2067,5 +2067,10 @@
   "settings.routing.subscriptionOverflow.preflight.pins": "{{live}} 个活跃固定会话 · {{tombstones}} 个已过期",
   "settings.routing.subscriptionOverflow.errors.sourceInvalid": "请选择支持 Responses API 的 OpenAI 兼容 Model source。",
   "settings.retention.inheritedHint": "未配置：生效值 {{value}} 天（0 表示禁用）",
-  "settings.telemetry.retentionNotice": "每个实例的遥测详细数据保留 365 天。"
+  "settings.telemetry.retentionNotice": "每个实例的遥测详细数据保留 365 天。",
+  "settings.telemetry.preview.heartbeat": "心跳",
+  "settings.telemetry.preview.completedDay": "已完成的一天",
+  "settings.telemetry.noticeDialog.title": "遥测数据内容已更新",
+  "settings.telemetry.noticeDialog.description": "此实例发送的匿名数据自您上次查看以来已发生变化。您已保存的遥测选择保持不变，可随时在设置中更改。",
+  "settings.telemetry.noticeDialog.acknowledge": "知道了"
 }

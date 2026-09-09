@@ -2067,5 +2067,10 @@
   "settings.routing.subscriptionOverflow.preflight.undeclaredTools": "선언되지 않은 tool type: {{types}}",
   "settings.routing.subscriptionOverflow.preflight.unpriced": "가격 없음 — 비용 tile에 $0으로 표시",
   "settings.routing.subscriptionOverflow.stagedNotice": "단계적으로 출시됩니다: source 선택과 preflight는 지금 사용할 수 있고, overflow routing 자체는 이후 릴리스에 포함됩니다.",
-  "settings.telemetry.retentionNotice": "인스턴스별 텔레메트리 상세 데이터는 365일 동안 보관됩니다."
+  "settings.telemetry.retentionNotice": "인스턴스별 텔레메트리 상세 데이터는 365일 동안 보관됩니다.",
+  "settings.telemetry.preview.heartbeat": "하트비트",
+  "settings.telemetry.preview.completedDay": "완료된 하루",
+  "settings.telemetry.noticeDialog.title": "텔레메트리 payload가 변경되었습니다",
+  "settings.telemetry.noticeDialog.description": "이 인스턴스가 전송하는 익명 데이터가 마지막으로 확인한 이후 변경되었습니다. 저장된 텔레메트리 선택은 그대로 유지되며 언제든지 Settings에서 변경할 수 있습니다.",
+  "settings.telemetry.noticeDialog.acknowledge": "확인"
 }
