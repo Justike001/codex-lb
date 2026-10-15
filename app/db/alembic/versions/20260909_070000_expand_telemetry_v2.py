@@ -1,7 +1,7 @@
 """Persist telemetry v2 notice and completed-day acknowledgement.
 
 Revision ID: 20260909_070000_expand_telemetry_v2
-Revises: 20260909_060000_add_report_rollup
+Revises: 20260918_000000_merge_scim_and_overflow_heads
 Create Date: 2026-09-09
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20260909_070000_expand_telemetry_v2"
-down_revision = "20260909_060000_add_report_rollup"
+down_revision = "20260918_000000_merge_scim_and_overflow_heads"
 branch_labels = None
 depends_on = None
 
