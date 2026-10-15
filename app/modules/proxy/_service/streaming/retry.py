@@ -2718,14 +2718,17 @@ class _StreamingRetryMixin:
                                     # original rejection below (one health write).
                                 if action == "failover_next":
                                     keep_account_in_walk = keeps_account_in_the_walk(classified)
-                                    if not keep_account_in_walk:
-                                        await _handle_or_defer_keyed_stream_health(
-                                            account,
-                                            _upstream_error_from_openai(error),
-                                            code,
-                                            http_status=tex.status_code,
-                                            retry_after_seconds=tex.retry_after_seconds,
-                                        )
+                                    # Health and walk-exclusion are separate
+                                    # decisions: the classified health result is
+                                    # recorded either way, and keep_account_in_walk
+                                    # only answers the exclusion question below.
+                                    await _handle_or_defer_keyed_stream_health(
+                                        account,
+                                        _upstream_error_from_openai(error),
+                                        code,
+                                        http_status=tex.status_code,
+                                        retry_after_seconds=tex.retry_after_seconds,
+                                    )
                                     last_transient_exc = tex
                                     transient_failed_account_id = account.id
                                     await _release_tracked_stream_lease(current_account_lease)
@@ -2807,14 +2810,16 @@ class _StreamingRetryMixin:
                                 phase="first_event",
                             )
                             keep_account_in_walk = keeps_account_in_the_walk(classified)
-                            if not keep_account_in_walk:
-                                await _handle_or_defer_keyed_stream_health(
-                                    account,
-                                    error_payload,
-                                    error_code,
-                                    http_status=transient_http_status,
-                                    transient_retry_count=transient_retries,
-                                )
+                            # The classified health result is recorded even when
+                            # the account stays in the walk: the health write and
+                            # the exclusion answer are separate decisions.
+                            await _handle_or_defer_keyed_stream_health(
+                                account,
+                                error_payload,
+                                error_code,
+                                http_status=transient_http_status,
+                                transient_retry_count=transient_retries,
+                            )
                             # Preserve last ProxyResponseError for propagate_http_errors path.
                             if isinstance(tex, ProxyResponseError):
                                 last_transient_exc = tex
@@ -3276,14 +3281,24 @@ class _StreamingRetryMixin:
                             )
                             if getattr(retry_exc, _POST_REFRESH_TRANSIENT_EXHAUSTED_ATTR, False):
                                 transient_error_payload = _stream_settlement_error_payload(settlement)
+                                transient_error_code = settlement.error_code or error_code or "upstream_error"
+                                classified = classify_upstream_failure(
+                                    error_code=transient_error_code,
+                                    error=transient_error_payload,
+                                    http_status=getattr(retry_exc, "status_code", None),
+                                    phase="first_event",
+                                )
+                                excludes_account = not keeps_account_in_the_walk(classified)
                                 last_transient_exc = retry_exc
                                 last_retryable_stream_error = _RetryableStreamError(
-                                    settlement.error_code or error_code or "upstream_error",
+                                    transient_error_code,
                                     transient_error_payload,
+                                    exclude_account=excludes_account,
                                 )
                                 await _release_tracked_stream_lease(current_account_lease)
                                 current_account_lease = None
-                                excluded_account_ids.add(account.id)
+                                if excludes_account:
+                                    excluded_account_ids.add(account.id)
                                 continue
                             account_model_retry = await _retry_account_model_rejection(
                                 retry_exc,

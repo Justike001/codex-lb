@@ -1964,14 +1964,18 @@ class _CompactMixin:
                                 phase="first_event",
                             )
                             keep_account_in_walk = keeps_account_in_the_walk(classified)
+                            # Health and walk-exclusion are separate decisions:
+                            # the health write must land even when the account
+                            # stays selectable, or a repeated capacity failure
+                            # leaves no transient record on it.
+                            if api_key is not None and api_key_reservation is not None:
+                                deferred_http_500_health.append((account, exc, transient_retries - 1))
+                            else:
+                                await proxy._handle_proxy_error(account, exc)
+                                # Record remaining errors so total equals transient_retries,
+                                # meeting the load balancer backoff threshold (error_count >= 3).
+                                await proxy._load_balancer.record_errors(account, transient_retries - 1)
                             if not keep_account_in_walk:
-                                if api_key is not None and api_key_reservation is not None:
-                                    deferred_http_500_health.append((account, exc, transient_retries - 1))
-                                else:
-                                    await proxy._handle_proxy_error(account, exc)
-                                    # Record remaining errors so total equals transient_retries,
-                                    # meeting the load balancer backoff threshold (error_count >= 3).
-                                    await proxy._load_balancer.record_errors(account, transient_retries - 1)
                                 excluded_account_ids.add(account.id)
                             last_exc = exc
                             transient_exhausted = True
