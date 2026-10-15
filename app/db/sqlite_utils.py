@@ -192,8 +192,9 @@ def _sqlite_uri_file_path(path: str) -> str | None:
     # SQLite treats the tilde in ``file:~/store.db`` literally; unlike a
     # normal application path it is not a shell shorthand for the home
     # directory. Likewise, ``file:///C:/...`` uses one leading slash for the
-    # authority-less URI syntax rather than as part of the Windows drive path.
-    if len(resolved) >= 4 and resolved[0] == "/" and resolved[1].isalpha() and resolved[2] == ":":
+    # authority-less URI syntax rather than as part of the Windows drive path,
+    # so only strip it where Windows drive paths are native.
+    if os.name == "nt" and len(resolved) >= 4 and resolved[0] == "/" and resolved[1].isalpha() and resolved[2] == ":":
         resolved = resolved[1:]
     return resolved
 
@@ -250,8 +251,7 @@ def sqlite_db_path_from_url(url: str) -> Path | None:
     # default SQLite URL directly from `data_dir`, so a valid literal path such
     # as `/var/lib/codex%20lb/store.db` must remain literal.
     path = _decode_sqlalchemy_windows_sqlite_path(path)
-    if _sqlite_uri_mode_active(query) and path.startswith("file:"):
-        path = _sqlite_uri_file_path(path)
+
 
     if not path or path == ":memory:" or _sqlite_uri_is_memory(url, path_start, path):
         return None

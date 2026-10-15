@@ -924,6 +924,18 @@ def test_compaction_restores_source_when_install_rename_fails(tmp_path: Path, mo
         real_replace(candidate, target)
 
     monkeypatch.setattr(compact, "_replace_path", fail_compacted_install)
+    real_exchange = compact._exchange_paths
+
+    def fail_compacted_exchange(first: Path, second: Path) -> None:
+        if ".compact-" in str(first) and second == source:
+            assert source.exists()
+            backups = list(tmp_path.glob("*.pre-compact-*"))
+            assert len(backups) == 1
+            assert source.samefile(backups[0])
+            raise OSError("injected install failure")
+        real_exchange(first, second)
+
+    monkeypatch.setattr(compact, "_exchange_paths", fail_compacted_exchange)
 
     with pytest.raises(OSError, match="injected install failure"):
         compact.execute_sqlite_compaction(_database_url(source), confirm_stopped=True)
@@ -952,6 +964,14 @@ def test_compaction_restores_sidecars_when_installation_is_interrupted(tmp_path:
         real_replace(candidate, target)
 
     monkeypatch.setattr(compact, "_replace_path", interrupt_compacted_install)
+    real_exchange = compact._exchange_paths
+
+    def interrupt_compacted_exchange(first: Path, second: Path) -> None:
+        if ".compact-" in str(first) and second == source:
+            raise KeyboardInterrupt
+        real_exchange(first, second)
+
+    monkeypatch.setattr(compact, "_exchange_paths", interrupt_compacted_exchange)
     monkeypatch.setattr(compact, "_backup_sidecars", move_sidecar_before_install)
 
     with pytest.raises(KeyboardInterrupt):
@@ -975,6 +995,15 @@ def test_compaction_restores_source_when_interrupted_after_installation(tmp_path
             raise KeyboardInterrupt
 
     monkeypatch.setattr(compact, "_replace_path", interrupt_after_compacted_install)
+    real_exchange = compact._exchange_paths
+
+    def interrupt_after_compacted_exchange(first: Path, second: Path) -> None:
+        real_exchange(first, second)
+        if ".compact-" in str(first) and second == source:
+            first.unlink()
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(compact, "_exchange_paths", interrupt_after_compacted_exchange)
 
     with pytest.raises(KeyboardInterrupt):
         compact.execute_sqlite_compaction(_database_url(source), confirm_stopped=True)
@@ -1005,6 +1034,15 @@ def test_compaction_restores_original_when_post_install_fsync_fails(tmp_path: Pa
             raise OSError("injected replacement fsync failure")
 
     monkeypatch.setattr(compact, "_replace_path", mark_replacement_install)
+    real_exchange = compact._exchange_paths
+
+    def mark_replacement_exchange(first: Path, second: Path) -> None:
+        nonlocal replacement_installed
+        real_exchange(first, second)
+        if ".compact-" in str(first) and second == source:
+            replacement_installed = True
+
+    monkeypatch.setattr(compact, "_exchange_paths", mark_replacement_exchange)
     monkeypatch.setattr(compact, "_fsync_descriptor", fail_replacement_fsync)
 
     with pytest.raises(OSError, match="injected replacement fsync failure"):
