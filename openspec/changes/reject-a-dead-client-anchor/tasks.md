@@ -20,8 +20,8 @@
 
 ## 3. Validation
 
-- [ ] 3.1 `make lint`, `make typecheck`.
-- [ ] 3.2 `make test-unit`, `make test-integration-bridge`, `make test-integration-core-1..3`,
+- [x] 3.1 `make lint`, `make typecheck`.
+- [x] 3.2 `make test-unit`, `make test-integration-bridge`, `make test-integration-core-1..3`,
   `tests/e2e`.
-- [ ] 3.3 `openspec validate reject-a-dead-client-anchor --strict`, `openspec validate --specs`.
-- [ ] 3.4 `codex review --base origin/main`.
+- [x] 3.3 `openspec validate reject-a-dead-client-anchor --strict`, `openspec validate --specs`.
+- [x] 3.4 `codex review --base origin/main`.

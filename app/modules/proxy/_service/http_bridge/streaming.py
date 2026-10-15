@@ -2527,6 +2527,38 @@ class _HTTPBridgeStreamingMixin:
             switch_to_account_neutral_replay()
 
         if required_continuity_owner_missing:
+            if (
+                request_state.previous_response_id is not None
+                and durable_lookup is not None
+                and durable_lookup.continuity_abandoned
+                and durable_lookup.account_id is None
+                and rewritten_file_account_id is None
+            ):
+                _log_http_bridge_event(
+                    "dead_anchor_owner_already_retired",
+                    bridge_session_key,
+                    account_id=request_state.preferred_account_id,
+                    model=payload.model,
+                    detail="outcome=report_bridge_previous_response_not_found",
+                    cache_key_family=bridge_session_key.affinity_kind,
+                    model_class=_extract_model_class(payload.model) if payload.model else None,
+                    owner_check_applied=True,
+                )
+                _record_continuity_fail_closed(
+                    surface="http_bridge",
+                    reason="dead_anchor_already_retired",
+                    previous_response_id=request_state.previous_response_id,
+                    session_id=request_state.session_id,
+                    upstream_error_code="owner_lookup_abandoned",
+                )
+                raise ProxyResponseError(
+                    404,
+                    openai_error(
+                        "bridge_previous_response_not_found",
+                        "The account that owns this conversation is no longer available; "
+                        "resend the full conversation history or start a new conversation.",
+                    ),
+                )
             owner_unavailable = ProxyResponseError(
                 502,
                 openai_error(

@@ -4,8 +4,8 @@
 
 When an HTTP session bridge request fails because its continuity owner account is unavailable,
 the request carries a client-supplied `previous_response_id`, and that owner cannot return
-before the request's own budget expires, the proxy MUST retire the owner and answer with an
-explicit previous-response rejection rather than a retryable failure. The rejection MUST reach
+before the request's own budget expires, the proxy MUST retire the owner and answer with HTTP 404 and error code
+`bridge_previous_response_not_found`, rather than a retryable failure. The rejection MUST reach
 the client unmasked, MUST name a remedy the client can act on — resending the conversation or
 starting a new one — and MUST NOT be marked with the pre-submit provenance that would route the
 turn to the plain HTTP upstream. An owner whose reset horizon falls inside the budget MUST
