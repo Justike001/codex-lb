@@ -16255,6 +16255,7 @@ def _install_500_walk_selection(
 async def _run_stream_500_walk(
     monkeypatch: pytest.MonkeyPatch,
     message: str,
+    rejection_factory: Any = _http_500_rejection,
 ) -> tuple[list[set[str]], list[str], list[dict[str, Any]]]:
     settings = _make_proxy_settings()
     service = proxy_service.ProxyService(
@@ -16273,7 +16274,7 @@ async def _run_stream_500_walk(
     async def fake_stream_once(account: Account, *_args: object, **_kwargs: object):
         stream_accounts.append(account.id)
         if account.id == saturated.id:
-            raise _http_500_rejection(message)
+            raise rejection_factory(message)
         yield 'data: {"type":"response.completed","response":{"id":"resp_500_walk_sibling"}}\n\n'
 
     monkeypatch.setattr(
@@ -16371,6 +16372,100 @@ async def test_stream_with_retry_excludes_the_account_after_an_ordinary_500(monk
     assert selection_exclusions[-1] == {_WALK_500_SATURATED_ACCOUNT_ID}
     assert stream_accounts[-1] == _WALK_500_SIBLING_ACCOUNT_ID
     assert events[-1]["type"] == "response.completed"
+
+
+def _http_429_rejection(message: str) -> proxy_module.ProxyResponseError:
+    return proxy_module.ProxyResponseError(
+        429,
+        proxy_module.openai_error("rate_limit_exceeded", message, error_type="rate_limit_exceeded"),
+        failure_phase="status",
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_with_retry_excludes_the_account_after_a_429_capacity_rate_limit(monkeypatch, caplog):
+    """A genuine 429 is a different decision than the 500 carve-out.
+
+    The model-capacity message under ``rate_limit_exceeded`` classifies as
+    ``rate_limit``, not ``retryable_transient``, so the keep-account carve-out
+    does not apply: the failing account leaves the walk and the sibling serves.
+    """
+    caplog.set_level(logging.INFO)
+    selection_exclusions, stream_accounts, events = await _run_stream_500_walk(
+        monkeypatch, _CAPACITY_500_MESSAGE, rejection_factory=_http_429_rejection
+    )
+
+    assert "failure_class=rate_limit" in caplog.text
+    assert selection_exclusions[-1] == {_WALK_500_SATURATED_ACCOUNT_ID}
+    assert stream_accounts[-1] == _WALK_500_SIBLING_ACCOUNT_ID
+    assert events[-1]["type"] == "response.completed"
+
+
+@pytest.mark.asyncio
+async def test_stream_with_retry_post_refresh_capacity_exhaustion_keeps_the_owner_selectable(monkeypatch):
+    """Capacity continuing past the post-refresh same-account retries must not walk
+    the pool even though another account remains: the sibling cannot serve the
+    model either, so the owner stays selectable throughout."""
+    settings = _make_proxy_settings()
+    scheduler = _RecordingSleepScheduler()
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()), scheduler=scheduler)
+    owner = _make_account("acc_post_refresh_capacity_owner")
+    sibling = _make_account("acc_post_refresh_capacity_sibling")
+    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(proxy_service, "_MAX_TRANSIENT_SAME_ACCOUNT_RETRIES", 1)
+    selection_exclusions: list[set[str]] = []
+
+    async def select_account(_deadline: float, **kwargs: object) -> AccountSelection:
+        excluded = set(cast(set[str], kwargs["exclude_account_ids"]))
+        selection_exclusions.append(excluded)
+        return AccountSelection(account=sibling if owner.id in excluded else owner, error_message=None)
+
+    monkeypatch.setattr(service, "_select_account_with_budget_compatible", select_account)
+    monkeypatch.setattr(service, "_ensure_fresh_with_budget", AsyncMock(side_effect=lambda target, **_k: target))
+    monkeypatch.setattr(service, "_handle_stream_error", AsyncMock())
+    monkeypatch.setattr(service, "_write_request_log", AsyncMock())
+    stream_accounts: list[str] = []
+    stream_once_calls = 0
+
+    async def fake_stream_once(streamed: Account, *_args: object, **_kwargs: object):
+        nonlocal stream_once_calls
+        stream_once_calls += 1
+        stream_accounts.append(streamed.id)
+        if stream_once_calls == 1:
+            raise proxy_module.ProxyResponseError(
+                401,
+                proxy_module.openai_error("invalid_api_key", "expired", error_type="invalid_request_error"),
+            )
+        raise _http_500_rejection(_CAPACITY_500_MESSAGE)
+        yield  # pragma: no cover - makes this an async generator
+
+    monkeypatch.setattr(service, "_stream_once", fake_stream_once)
+
+    try:
+        events = [
+            json.loads(chunk.split("data: ", 1)[1])
+            async for chunk in service._stream_with_retry(
+                _burst_payload(_BURST_OWNER_BOUND_INPUT),
+                {"session_id": "sid-post-refresh-capacity"},
+                codex_session_affinity=False,
+                propagate_http_errors=True,
+                openai_cache_affinity=False,
+                api_key=None,
+                api_key_reservation=None,
+                suppress_text_done_events=False,
+                request_transport="http",
+                upstream_stream_transport_override="http",
+            )
+        ]
+        assert events[-1]["type"] == "response.failed"
+    except proxy_module.ProxyResponseError:
+        pass  # the propagated surface is fine; the walk decision is what is under test
+
+    assert selection_exclusions
+    assert all(owner.id not in excluded for excluded in selection_exclusions)
+    assert set(stream_accounts) == {owner.id}
+    assert stream_once_calls >= 3
 
 
 @pytest.mark.asyncio
@@ -56597,15 +56692,30 @@ async def test_stream_with_retry_post_refresh_message_only_usage_limit_429_surfa
     account = _make_account("acc_post_refresh_usage_limit_owner")
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
-    select_account = AsyncMock(return_value=AccountSelection(account=account, error_message=None))
+    fallback = _make_account("acc_post_refresh_usage_limit_fallback")
+    selection_kwargs: list[dict[str, object]] = []
+
+    async def select_account(_deadline: float, **kwargs: object) -> AccountSelection:
+        selection_kwargs.append(kwargs)
+        # This path reuses the bound owner directly instead of re-selecting, so
+        # only a foreign owner preference rotates onto the distinct fallback:
+        # unintended rotation then fails the stream-account assertions below
+        # explicitly instead of silently reusing one fake account.
+        preference = kwargs.get("preferred_account_id")
+        if preference is not None and preference != account.id:
+            return AccountSelection(account=fallback, error_message=None)
+        return AccountSelection(account=account, error_message=None)
+
     monkeypatch.setattr(service, "_select_account_with_budget_compatible", select_account)
     monkeypatch.setattr(service, "_ensure_fresh_with_budget", AsyncMock(side_effect=lambda target, **_k: target))
     monkeypatch.setattr(service, "_handle_stream_error", AsyncMock())
     monkeypatch.setattr(service, "_write_request_log", AsyncMock())
     stream_once_calls = 0
+    stream_account_ids: list[str] = []
 
-    async def fake_stream_once(_account: Account, *_args: object, **_kwargs: object):
+    async def fake_stream_once(streamed: Account, *_args: object, **_kwargs: object):
         nonlocal stream_once_calls
+        stream_account_ids.append(streamed.id)
         stream_once_calls += 1
         if stream_once_calls == 1:
             raise proxy_module.ProxyResponseError(
@@ -56646,6 +56756,12 @@ async def test_stream_with_retry_post_refresh_message_only_usage_limit_429_surfa
     assert "phase=post_refresh failure_class=rate_limit action=surface" in caplog.text
     # Out of quota: no same-account backoff was spent waiting on this account.
     assert scheduler.sleeps == []
+    # Owner binding survives the post-refresh retry: every selection that ran
+    # asked for this owner (or asked for no preference, which this path answers
+    # by reusing the bound owner), and both stream attempts used it.
+    assert selection_kwargs
+    assert all(call.get("preferred_account_id") in (None, account.id) for call in selection_kwargs)
+    assert stream_account_ids == [account.id, account.id]
 
 
 @pytest.mark.asyncio
