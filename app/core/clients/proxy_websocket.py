@@ -1098,8 +1098,8 @@ async def _connect_upstream_websocket(
     )
     proxy_url = resolve_websocket_proxy_from_env(url, proxy_env) if settings.upstream_websocket_trust_env else None
     try:
-        subprotocol_kwargs = {"subprotocols": cast(Sequence[Subprotocol], subprotocols)} if subprotocols else {}
-        ssl_kwargs = {"ssl": _shared_system_ssl_context()} if urlparse(url).scheme == "wss" else {}
+        subprotocols_arg = cast(Sequence[Subprotocol], subprotocols) if subprotocols else None
+        ssl_arg = _shared_system_ssl_context() if urlparse(url).scheme == "wss" else None
         response = await websocket_connect(
             url,
             origin=origin,
@@ -1113,8 +1113,8 @@ async def _connect_upstream_websocket(
             # the direct path's default offer aligned with the routed aiohttp
             # path (``compress=15`` above).
             compression="deflate",
-            **subprotocol_kwargs,
-            **ssl_kwargs,
+            subprotocols=subprotocols_arg,
+            ssl=ssl_arg,
         )
     except asyncio.TimeoutError as exc:
         raise ProxyResponseError(
