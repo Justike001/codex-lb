@@ -1092,3 +1092,39 @@ def test_compaction_rejects_a_descriptor_for_another_inode(tmp_path: Path, monke
     assert unrelated.read_bytes() == original_unrelated
     assert list(tmp_path.glob("*.pre-compact-*")) == []
     assert not Path(f"{source}.compact.lock").exists()
+
+
+def test_install_replacement_aborts_when_source_inode_changed(tmp_path: Path) -> None:
+    source = tmp_path / "store.db"
+    replacement = tmp_path / "compacted.db"
+    swapped = tmp_path / "swapped.db"
+    source.write_bytes(b"original")
+    replacement.write_bytes(b"compacted")
+    swapped.write_bytes(b"swapped-in")
+    backup = tmp_path / "store.pre-compact.db"
+    os.link(source, backup)
+    original_identity = (source.stat().st_dev, source.stat().st_ino)
+    os.replace(swapped, source)
+
+    with pytest.raises(RuntimeError, match="source path changed before compacted replacement"):
+        compact._install_replacement_preserving_identity(replacement, source, original_identity)
+
+    assert source.read_bytes() == b"swapped-in"
+    assert replacement.read_bytes() == b"compacted"
+    assert backup.read_bytes() == b"original"
+
+
+def test_install_replacement_installs_verified_source_atomically(tmp_path: Path) -> None:
+    source = tmp_path / "store.db"
+    replacement = tmp_path / "compacted.db"
+    source.write_bytes(b"original")
+    replacement.write_bytes(b"compacted")
+    backup = tmp_path / "store.pre-compact.db"
+    os.link(source, backup)
+    original_identity = (source.stat().st_dev, source.stat().st_ino)
+
+    compact._install_replacement_preserving_identity(replacement, source, original_identity)
+
+    assert source.read_bytes() == b"compacted"
+    assert backup.read_bytes() == b"original"
+    assert not replacement.exists()

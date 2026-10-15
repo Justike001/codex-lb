@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import ctypes
+import errno
 import os
 import shutil
 import sqlite3
 import stat
+import sys
 import tempfile
 import urllib.parse
 from collections.abc import Iterator
@@ -296,6 +299,70 @@ def _link_path(source: Path, target: Path) -> None:
     os.link(source, target)
 
 
+_AT_FDCWD = -100
+_RENAME_EXCHANGE = 0x2
+
+
+def _exchange_paths(first: Path, second: Path) -> None:
+    """Atomically swap two same-directory entries via renameat2."""
+    if sys.platform != "linux":
+        raise RuntimeError("atomic path exchange requires Linux renameat2")
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = libc.renameat2
+    renameat2.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+    renameat2.restype = ctypes.c_int
+    if renameat2(_AT_FDCWD, os.fsencode(first), _AT_FDCWD, os.fsencode(second), _RENAME_EXCHANGE) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), str(first))
+
+
+def _install_replacement_preserving_identity(
+    temporary: Path, source: Path, expected_identity: tuple[int, int]
+) -> None:
+    """Install temporary at source only if source still has expected_identity.
+
+    Validation and replacement happen as one atomic exchange on Linux: the
+    entries are swapped with RENAME_EXCHANGE, then the displaced entry (now at
+    temporary) is verified against the expected identity. On mismatch the
+    entries are swapped back so the current target is preserved, and
+    installation aborts. The caller must hold another link to the expected
+    inode (the pre-compact backup); the displaced link at temporary is
+    removed. Platforms without renameat2 keep a final verified
+    check-then-replace.
+    """
+    if sys.platform == "linux":
+        try:
+            _exchange_paths(temporary, source)
+        except AttributeError:
+            pass
+        except OSError as exc:
+            if exc.errno not in (errno.ENOSYS, errno.EINVAL):
+                raise
+        else:
+            try:
+                displaced_stat = temporary.lstat()
+            except OSError:
+                displaced_stat = None
+            if (
+                displaced_stat is None
+                or not stat.S_ISREG(displaced_stat.st_mode)
+                or (displaced_stat.st_dev, displaced_stat.st_ino) != expected_identity
+            ):
+                try:
+                    _exchange_paths(temporary, source)
+                except OSError:
+                    raise RuntimeError(
+                        "source path changed before compacted replacement and the current target "
+                        "could not be restored"
+                    ) from None
+                raise RuntimeError("source path changed before compacted replacement")
+            temporary.unlink()
+            return
+    if not _path_matches_identity(source, expected_identity):
+        raise RuntimeError("source path changed before compacted replacement")
+    _replace_path(temporary, source)
+
+
 def _reserve_path(target: Path) -> None:
     descriptor = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     os.close(descriptor)
@@ -554,15 +621,11 @@ def execute_sqlite_compaction(
             _fsync_directory(source.parent)
             try:
                 moved_sidecars = _backup_sidecars(source, backup)
-                if not _path_matches_identity(source, original_source_identity):
-                    raise RuntimeError("source path changed before compacted replacement")
                 replacement_connection = sqlite3.connect(str(temporary))
                 replacement_connection.execute("PRAGMA busy_timeout=0")
                 replacement_connection.execute("BEGIN EXCLUSIVE")
                 try:
-                    if not _path_matches_identity(source, original_source_identity):
-                        raise RuntimeError("source path changed before compacted replacement")
-                    _replace_path(temporary, source)
+                    _install_replacement_preserving_identity(temporary, source, original_source_identity)
                 finally:
                     replacement_installed = not temporary.exists()
             except BaseException:

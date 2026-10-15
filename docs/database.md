@@ -40,7 +40,11 @@ database aside, then restore the reported backup and any preserved sidecars:
 ```bash
 db=/var/lib/codex-lb/store.db
 backup=/var/lib/codex-lb/store.pre-compact-YYYYMMDDTHHMMSSZ.db
-mv "$db" "${db}.failed-$(date -u +%Y%m%dT%H%M%SZ)"
+failed="${db}.failed-$(date -u +%Y%m%dT%H%M%SZ)"
+mv "$db" "$failed"
+for suffix in -wal -shm -journal; do
+  { [ -e "${db}${suffix}" ] || [ -L "${db}${suffix}" ]; } && mv "${db}${suffix}" "${failed}${suffix}"
+done
 mv "$backup" "$db"
 for suffix in -wal -shm -journal; do
   { [ -e "${backup}${suffix}" ] || [ -L "${backup}${suffix}" ]; } && mv "${backup}${suffix}" "${db}${suffix}"
